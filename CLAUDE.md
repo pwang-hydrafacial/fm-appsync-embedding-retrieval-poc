@@ -4,7 +4,7 @@
 Build a minimal runnable POC for semantic retrieval over GraphQL.
 
 ## Non-negotiables
-- Keep this repo outside `~/.hermes`
+- Keep this repo standalone as the implementation repo
 - Use Terraform for IaC
 - Use RDS PostgreSQL + pgvector for the first version
 - Use AWS AppSync as the API layer

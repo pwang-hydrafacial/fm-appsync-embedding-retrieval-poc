@@ -20,7 +20,7 @@ Build a cheap first-pass POC that exposes semantic retrieval through GraphQL:
 
 ## Repo boundary
 This is the implementation repo intended for Claude Code and GitHub.
-Internal Hermes continuity/project memory is maintained separately under `~/.hermes/knowledge-base/projects/aws-appsync-embedding-retrieval-poc/`.
+Keep this repo standalone and implementation-focused.
 
 ## Initial architecture
 1. GraphQL query takes `queryText`
