@@ -1,0 +1,18 @@
+[
+  {
+    "documentId": "doc-001",
+    "title": "Call center process overview",
+    "chunks": [
+      {
+        "chunkId": "chunk-001",
+        "text": "Agents should verify customer identity before discussing loan details.",
+        "source": "sample-doc-1"
+      },
+      {
+        "chunkId": "chunk-002",
+        "text": "Escalate servicing exceptions to the specialist queue.",
+        "source": "sample-doc-1"
+      }
+    ]
+  }
+]

@@ -1,0 +1,16 @@
+type Query {
+  retrieve(queryText: String!, topK: Int = 5): RetrievalResponse!
+}
+
+type RetrievalResponse {
+  queryText: String!
+  matches: [RetrievalMatch!]!
+}
+
+type RetrievalMatch {
+  documentId: String!
+  chunkId: String!
+  text: String!
+  similarityScore: Float!
+  source: String
+}
