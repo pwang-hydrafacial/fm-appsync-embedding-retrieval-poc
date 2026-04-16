@@ -8,6 +8,29 @@ no vector math exposed externally.
 
 ## Architecture
 
+```mermaid
+flowchart TD
+    CLI["CLI client\n(local)"]
+    AppSync["AWS AppSync\nGraphQL API · API_KEY auth"]
+    Lambda["Lambda resolver\nPython 3.12"]
+    Bedrock["Amazon Bedrock\nTitan Embed Text v2"]
+    SM["Secrets Manager\nDB credentials"]
+    RDS["RDS PostgreSQL 16\n+ pgvector\ncosine similarity search"]
+
+    CLI -->|"retrieve(queryText, topK)"| AppSync
+    AppSync -->|Lambda invoke| Lambda
+    Lambda -->|"embed(queryText) → 1024-dim vector"| Bedrock
+    Lambda -->|GetSecretValue| SM
+    SM -->|host · user · password| Lambda
+    Bedrock -->|embedding vector| Lambda
+    Lambda -->|"SELECT … ORDER BY embedding <=> $1"| RDS
+    RDS -->|"top-K text chunks + scores"| Lambda
+    Lambda -->|RetrievalResponse| AppSync
+    AppSync -->|matches| CLI
+```
+
+ASCII fallback:
+
 ```
 ┌─────────────┐        GraphQL query         ┌──────────────────┐
 │  CLI client │ ─────────────────────────────▶│  AWS AppSync     │
