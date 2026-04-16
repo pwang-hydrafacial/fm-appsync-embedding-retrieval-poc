@@ -9,24 +9,28 @@ This POC implements semantic retrieval over GraphQL. A client submits a plain-En
 ## Request Flow
 
 ```mermaid
-flowchart TD
-    CLI["CLI client\n(local)"]
-    AppSync["AWS AppSync\nGraphQL API · API_KEY auth"]
-    Lambda["Lambda resolver\nPython 3.12"]
-    Bedrock["Amazon Bedrock\nTitan Embed Text v2"]
-    SM["Secrets Manager\nDB credentials"]
-    RDS["RDS PostgreSQL 16\n+ pgvector\ncosine similarity search"]
+flowchart LR
+    subgraph local["Local"]
+        CLI["CLI client"]
+    end
 
-    CLI -->|"retrieve(queryText, topK)"| AppSync
-    AppSync -->|Lambda invoke| Lambda
-    Lambda -->|"embed(queryText) → 1024-dim vector"| Bedrock
-    Lambda -->|GetSecretValue| SM
-    SM -->|host · user · password| Lambda
-    Bedrock -->|embedding vector| Lambda
-    Lambda -->|"SELECT … ORDER BY embedding <=> $1"| RDS
-    RDS -->|"top-K text chunks + scores"| Lambda
-    Lambda -->|RetrievalResponse| AppSync
-    AppSync -->|matches| CLI
+    subgraph cloud["AWS"]
+        AppSync["AppSync\nGraphQL API"]
+        Lambda["Lambda\nresolver"]
+        Bedrock["Bedrock\nTitan Embed v2"]
+        SM["Secrets Manager"]
+        RDS["RDS\n+ pgvector"]
+    end
+
+    CLI -->|GraphQL query| AppSync
+    AppSync -->|invoke| Lambda
+    Lambda -->|embed text| Bedrock
+    Lambda -->|get creds| SM
+    Lambda -->|vector search| RDS
+
+    RDS -.->|top-K matches| Lambda
+    Lambda -.->|response| AppSync
+    AppSync -.->|matches| CLI
 ```
 
 ASCII fallback:
