@@ -59,31 +59,20 @@ sequenceDiagram
 ASCII fallback:
 
 ```
-┌─────────────┐        GraphQL query         ┌──────────────────┐
-│  CLI client │ ─────────────────────────────▶│  AWS AppSync     │
-│ (local)     │  x-api-key header             │  (GraphQL API)   │
-└─────────────┘                               └────────┬─────────┘
-                                                       │ Lambda invoke
-                                                       ▼
-                                              ┌──────────────────┐
-                                              │  Lambda resolver │
-                                              │  (Python 3.12)   │
-                                              └──┬───────────┬───┘
-                                                 │           │
-                              Bedrock invoke      │           │  GetSecretValue
-                                                 ▼           ▼
-                                        ┌─────────────┐  ┌──────────────────┐
-                                        │   Bedrock   │  │ Secrets Manager  │
-                                        │ Titan Embed │  │  (DB password)   │
-                                        │    v2       │  └────────┬─────────┘
-                                        └──────┬──────┘           │ credentials
-                                               │ 1024-dim          │
-                                               │ embedding         ▼
-                                               └──────▶  ┌──────────────────┐
-                                                         │  RDS PostgreSQL  │
-                                                         │  + pgvector      │
-                                                         │  cosine search   │
-                                                         └──────────────────┘
+┌─────────────┐
+│  CLI client │  (local)
+└──────┬──▲───┘
+       │  │ matches
+  query│  │
+       ▼  │
+┌─────────────────────────────────────────────────────────────────┐
+│  AWS                                                             │
+│                                                                  │
+│  AppSync ──invoke──▶ Lambda ┬── embed text ──▶ Bedrock          │
+│  GraphQL ←─response─        ├── get creds  ──▶ Secrets Manager  │
+│  API                        └── vec search ──▶ RDS + pgvector   │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 Everything is Terraform-managed and destroyable with one command.

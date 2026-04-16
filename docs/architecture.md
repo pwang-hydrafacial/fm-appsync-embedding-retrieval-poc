@@ -36,34 +36,20 @@ flowchart LR
 ASCII fallback:
 
 ```
-┌─────────────┐        GraphQL query         ┌──────────────────┐
-│  CLI client │ ─────────────────────────────▶│  AWS AppSync     │
-│ (local)     │  x-api-key header             │  (GraphQL API)   │
-└─────────────┘                               └────────┬─────────┘
-                                                       │ Lambda invoke
-                                                       ▼
-                                              ┌──────────────────┐
-                                              │  Lambda resolver │
-                                              │  (Python 3.12)   │
-                                              └──┬───────────┬───┘
-                                                 │           │
-                              Bedrock invoke      │           │  GetSecretValue
-                                                 ▼           ▼
-                                        ┌─────────────┐  ┌──────────────────┐
-                                        │   Bedrock   │  │ Secrets Manager  │
-                                        │ Titan Embed │  │  (DB password)   │
-                                        │    v2       │  └────────┬─────────┘
-                                        └──────┬──────┘           │
-                                               │ 1024-dim          │ credentials
-                                               │ embedding         │
-                                               ▼                   ▼
-                                        ┌──────────────────────────────┐
-                                        │   RDS PostgreSQL 16.6        │
-                                        │   + pgvector extension       │
-                                        │                              │
-                                        │  cosine similarity search    │
-                                        │  returns top-K text chunks   │
-                                        └──────────────────────────────┘
+┌─────────────┐
+│  CLI client │  (local)
+└──────┬──▲───┘
+       │  │ matches
+  query│  │
+       ▼  │
+┌─────────────────────────────────────────────────────────────────┐
+│  AWS                                                             │
+│                                                                  │
+│  AppSync ──invoke──▶ Lambda ┬── embed text ──▶ Bedrock          │
+│  GraphQL ←─response─        ├── get creds  ──▶ Secrets Manager  │
+│  API                        └── vec search ──▶ RDS + pgvector   │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
