@@ -72,14 +72,111 @@ ASCII fallback:
 - Routes all requests to the Lambda data source via a VTL resolver
 - Hides the Lambda invocation details from the client entirely
 
-### Lambda Resolver (`handler.py`)
-Single function that owns the full retrieval pipeline:
+### Lambda Resolver
 
-1. Receives `{ arguments: { queryText, topK } }` from AppSync
-2. Fetches DB credentials from Secrets Manager
-3. Calls Bedrock to embed the query text
-4. Runs a cosine similarity query against pgvector
-5. Returns ranked matches as structured JSON
+The resolver is split into four modules, each with a single responsibility:
+
+```
+app/lambda/
+├── handler.py       — AppSync entry point, parses event
+├── retrieval.py     — orchestrates embed → search
+├── bedrock_embed.py — calls Bedrock, returns float vector
+└── db.py            — connects to RDS, runs pgvector query
+```
+
+#### `handler.py` — entry point
+
+AppSync invokes this with a payload shaped by the VTL request template:
+
+```python
+def handler(event, context):
+    args = event.get("arguments", {})
+    query_text = args.get("queryText", "")
+    top_k = args.get("topK", 5)
+    return {
+        "queryText": query_text,
+        "matches": retrieve_matches(query_text=query_text, top_k=top_k),
+    }
+```
+
+The AppSync VTL template that produces this event:
+
+```vtl
+{
+  "version": "2018-05-29",
+  "operation": "Invoke",
+  "payload": {
+    "arguments": $util.toJson($ctx.args)
+  }
+}
+```
+
+#### `retrieval.py` — pipeline orchestrator
+
+Thin glue layer: embed the query, then search with the result.
+
+```python
+def retrieve_matches(query_text: str, top_k: int = 5):
+    if not query_text:
+        return []
+    embedding = embed_query(query_text)
+    return search_similar_chunks(embedding=embedding, top_k=top_k)
+```
+
+#### `bedrock_embed.py` — embedding
+
+Calls Bedrock Titan Embed Text v2. The client is module-level so it is
+reused across warm Lambda invocations.
+
+```python
+def embed_query(query_text: str) -> list[float]:
+    model_id = os.environ.get("BEDROCK_MODEL_ID", "amazon.titan-embed-text-v2:0")
+    body = json.dumps({"inputText": query_text, "dimensions": 1024, "normalize": True})
+    resp = _bedrock().invoke_model(
+        modelId=model_id,
+        body=body,
+        contentType="application/json",
+        accept="application/json",
+    )
+    return json.loads(resp["body"].read())["embedding"]
+```
+
+Key parameters:
+- `dimensions: 1024` — matches the `vector(1024)` column in the DB
+- `normalize: True` — unit-normalizes the vector so cosine distance == dot-product distance
+
+#### `db.py` — pgvector search
+
+Fetches credentials from Secrets Manager at call time, opens a connection,
+runs the similarity query, and closes the connection.
+
+```python
+def search_similar_chunks(embedding: list[float], top_k: int = 5) -> list[dict]:
+    vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+    conn = _connect()                      # pulls creds from Secrets Manager
+    try:
+        rows = conn.run(
+            """
+            SELECT chunk_id, document_id, text, source,
+                   1 - (embedding <=> CAST(:vec AS vector)) AS similarity_score
+            FROM document_chunks
+            ORDER BY embedding <=> CAST(:vec AS vector)
+            LIMIT :k
+            """,
+            vec=vec_str,
+            k=top_k,
+        )
+        return [{"chunkId": r[0], "documentId": r[1], "text": r[2],
+                 "source": r[3], "similarityScore": float(r[4])} for r in rows]
+    finally:
+        conn.close()
+```
+
+Notes:
+- `<=>` is pgvector's cosine distance operator (lower = more similar)
+- `1 - distance` converts distance to a similarity score (higher = better match)
+- `CAST(:vec AS vector)` rather than `::vector` avoids a pg8000 named-parameter parsing conflict
+- `pg8000.native` is used (pure Python, no compiled binary needed in the Lambda layer)
 
 ### Amazon Bedrock — Titan Embed Text v2
 - Model: `amazon.titan-embed-text-v2:0`
