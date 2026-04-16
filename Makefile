@@ -6,11 +6,11 @@ TF_DIR      := terraform
 export AWS_PROFILE
 export AWS_REGION
 
-.PHONY: bootstrap build tf-init tf-plan tf-apply tf-destroy seed query smoke
+.PHONY: bootstrap build tf-init tf-plan tf-apply tf-destroy seed query smoke look
 
 # Install Python deps and build Lambda layer zip (run once before tf-plan)
 bootstrap:
-	$(PYTHON) -m venv .venv
+	python3 -m venv .venv
 	. .venv/bin/activate && pip install --upgrade pip --quiet
 	. .venv/bin/activate && pip install boto3 pg8000 --quiet
 	$(MAKE) build
@@ -47,3 +47,7 @@ query:
 smoke:
 	@echo "Running smoke test..."
 	$(MAKE) query q="How should agents handle customer identity?"
+
+# Open AWS Console pages for provisioned resources
+look:
+	$(MAKE) -C look help
