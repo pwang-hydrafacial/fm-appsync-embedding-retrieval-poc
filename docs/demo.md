@@ -140,11 +140,15 @@ the user's question is embedded live and compared against all stored vectors.
 
 ## Prerequisites
 
-You need an AWS profile configured with access to this account and Bedrock
-model access enabled for `amazon.titan-embed-text-v2:0` in `us-east-1`.
+- An AWS profile configured with access to the target account
+- Bedrock model access enabled for `amazon.titan-embed-text-v2:0` in `us-east-1`
+  (AWS Console → Bedrock → Model access → Request access)
+- Terraform >= 1.6 and Python 3 installed locally
+
+Set your profile before running any commands:
 
 ```bash
-export AWS_PROFILE=uiuc-pjwang
+export AWS_PROFILE=<your-profile>
 export AWS_REGION=us-east-1
 ```
 
@@ -207,7 +211,7 @@ make seed
 
 Output:
 ```
-Using AWS_PROFILE=uiuc-pjwang AWS_REGION=us-east-1
+Using AWS_PROFILE=<your-profile> AWS_REGION=us-east-1
 Connected to RDS. Setting up schema...
   Embedding chunk-001...
   Embedding chunk-002...
