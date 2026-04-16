@@ -43,6 +43,17 @@ make seed
 make query q="How should agents handle customer identity?"
 ```
 
+Open related AWS Console pages:
+
+```bash
+make -C look print
+make -C look appsync
+make -C look schema
+make -C look lambda
+make -C look rds
+make -C look rds-query
+```
+
 Output:
 ```
 Query: How should agents handle customer identity?
@@ -133,3 +144,4 @@ RDS endpoint: `fm-appsync-embedding-retrieval-poc-db.cm2vcfi9brtn.us-east-1.rds.
 | `make seed` | Embed and load documents into RDS |
 | `make query q="..."` | Run a semantic query via AppSync |
 | `make smoke` | Run a canned smoke test query |
+| `make -C look <target>` | Open AWS Console pages for provisioned resources |
