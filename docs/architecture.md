@@ -26,7 +26,7 @@ flowchart LR
         RDS2["RDS2\npolicy_chunks"]
     end
 
-    CLI -->|GraphQL query| AppSync
+    CLI -->|NL question| AppSync
     AppSync -->|invoke| Lambda
     Lambda -->|get creds x2| SM
     Lambda -->|embed source 1| Titan
@@ -37,28 +37,10 @@ flowchart LR
     RDS1 -.->|matches| Lambda
     RDS2 -.->|matches| Lambda
     Lambda -.->|merged + ranked| AppSync
-    AppSync -.->|matches + dataSource| CLI
-```
+    AppSync -.->|ranked text matches| CLI
 
-ASCII fallback:
-
-```
-┌─────────────┐
-│  CLI client │  (local)
-└──────┬──▲───┘
-       │  │ matches + dataSource
-  query│  │
-       ▼  │
-┌─────────────────────────────────────────────────────────────────────────┐
-│  AWS                                                                     │
-│                                                                          │
-│  AppSync ──invoke──▶ Lambda ┬── embed ──▶ Bedrock Titan Embed v2        │
-│  GraphQL ←─response─        ├── embed ──▶ Bedrock Cohere Embed v3       │
-│  API                        ├── creds ──▶ Secrets Manager               │
-│                             ├── search ─▶ RDS1 (document_chunks)        │
-│                             └── search ─▶ RDS2 (policy_chunks)          │
-│                               [merge + re-rank top-K]                   │
-└──────────────────────────────────────────────────────────────────────────┘
+    style RDS1 fill:#4472C4,stroke:#2E5090,color:#fff
+    style RDS2 fill:#70AD47,stroke:#4E7C30,color:#fff
 ```
 
 ---
