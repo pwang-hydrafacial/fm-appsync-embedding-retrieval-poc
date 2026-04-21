@@ -14,7 +14,7 @@ RDS_IDENTIFIER   := $(shell echo "$(RDS_ENDPOINT)" | cut -d. -f1)
 APPSYNC_ROLE_NAME := $(patsubst %-retrieval,%-appsync-role,$(LAMBDA_NAME))
 
 .PHONY: help check rds rds-query appsync schema lambda all print \
-        appsync-home appsync-datasources appsync-keys iam-appsync
+        appsync-home appsync-datasources appsync-keys iam-appsync lambda-create
 
 help:
 	@echo "Open AWS Console pages for this POC"
@@ -38,6 +38,10 @@ help:
 	@echo ""
 	@echo "IAM targets:"
 	@echo "  iam-appsync          Open the AppSync IAM execution role"
+	@echo ""
+	@echo "Lambda targets:"
+	@echo "  lambda               Open the existing Lambda function (code tab)"
+	@echo "  lambda-create        Open the Lambda create-function page"
 	@echo ""
 	@echo "Note: targets that require an API ID accept APPSYNC_API_ID=<id> as an override"
 	@echo "      when the API was not created by Terraform."
@@ -79,7 +83,11 @@ all: rds rds-query appsync schema lambda
 
 # ── AppSync manual-setup targets ──────────────────────────────────────────────
 
-# Step 1: open AppSync home to create a new API (no API ID needed)
+# Step 1: Lambda create page (no existing function or API ID needed)
+lambda-create:
+	open "https://console.aws.amazon.com/lambda/home?region=$(AWS_REGION)#/create/function"
+
+# Step 2: open AppSync home to create a new API (no API ID needed)
 appsync-home:
 	open "https://console.aws.amazon.com/appsync/home?region=$(AWS_REGION)"
 
