@@ -18,3 +18,11 @@ output "secret_arn" {
 output "lambda_function_name" {
   value = aws_lambda_function.retrieval.function_name
 }
+
+output "rds_endpoint_2" {
+  value = aws_db_instance.postgres2.address
+}
+
+output "secret_arn_2" {
+  value = aws_secretsmanager_secret.db2.arn
+}

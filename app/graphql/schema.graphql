@@ -13,4 +13,5 @@ type RetrievalMatch {
   text: String!
   similarityScore: Float!
   source: String
+  dataSource: String
 }

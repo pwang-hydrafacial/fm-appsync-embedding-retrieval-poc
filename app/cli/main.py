@@ -20,6 +20,7 @@ query Retrieve($queryText: String!, $topK: Int) {
       text
       similarityScore
       source
+      dataSource
     }
   }
 }
@@ -68,7 +69,7 @@ def main():
     print(f"\nQuery: {args.query}")
     print(f"Matches ({len(matches)}):\n")
     for i, m in enumerate(matches, 1):
-        print(f"  [{i}] score={m['similarityScore']:.4f}  source={m['source']}")
+        print(f"  [{i}] score={m['similarityScore']:.4f}  source={m['source']}  dataSource={m['dataSource']}")
         print(f"      {m['text']}\n")
 
 

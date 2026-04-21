@@ -1,0 +1,63 @@
+[
+  {
+    "policyId": "pol-001",
+    "title": "Employee Onboarding Policy",
+    "category": "onboarding",
+    "chunks": [
+      {
+        "chunkId": "pol-001-c1",
+        "text": "All new hires must complete mandatory compliance training within the first 30 days of employment.",
+        "source": "hr-policy-onboarding"
+      },
+      {
+        "chunkId": "pol-001-c2",
+        "text": "New employees are assigned a buddy from their team for the first 90 days to support integration.",
+        "source": "hr-policy-onboarding"
+      }
+    ]
+  },
+  {
+    "policyId": "pol-002",
+    "title": "Time Off and Leave Policy",
+    "category": "leave",
+    "chunks": [
+      {
+        "chunkId": "pol-002-c1",
+        "text": "Employees accrue 1.5 days of paid time off per month, up to a maximum of 18 days per calendar year.",
+        "source": "hr-policy-leave"
+      },
+      {
+        "chunkId": "pol-002-c2",
+        "text": "Requests for leave exceeding five consecutive days must be submitted at least two weeks in advance.",
+        "source": "hr-policy-leave"
+      },
+      {
+        "chunkId": "pol-002-c3",
+        "text": "Parental leave of up to 12 weeks is available for primary caregivers following the birth or adoption of a child.",
+        "source": "hr-policy-leave"
+      }
+    ]
+  },
+  {
+    "policyId": "pol-003",
+    "title": "Performance Review Policy",
+    "category": "performance",
+    "chunks": [
+      {
+        "chunkId": "pol-003-c1",
+        "text": "Annual performance reviews are conducted in December and directly inform compensation adjustments effective January.",
+        "source": "hr-policy-performance"
+      },
+      {
+        "chunkId": "pol-003-c2",
+        "text": "Employees receiving a below-expectations rating must complete a 60-day performance improvement plan.",
+        "source": "hr-policy-performance"
+      },
+      {
+        "chunkId": "pol-003-c3",
+        "text": "Mid-year check-ins are mandatory for all employees and should be scheduled between June and July.",
+        "source": "hr-policy-performance"
+      }
+    ]
+  }
+]

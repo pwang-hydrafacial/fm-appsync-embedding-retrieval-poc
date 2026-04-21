@@ -209,14 +209,20 @@ resource "aws_iam_role_policy" "lambda" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = ["bedrock:InvokeModel"]
-        Resource = "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.bedrock_model_id}"
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        Resource = [
+          "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.bedrock_model_id}",
+          "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.bedrock_model_id_2}",
+        ]
       },
       {
-        Effect   = "Allow"
-        Action   = ["secretsmanager:GetSecretValue"]
-        Resource = aws_secretsmanager_secret.db.arn
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          aws_secretsmanager_secret.db.arn,
+          aws_secretsmanager_secret.db2.arn,
+        ]
       }
     ]
   })
@@ -254,9 +260,11 @@ resource "aws_lambda_function" "retrieval" {
 
   environment {
     variables = {
-      SECRET_ARN       = aws_secretsmanager_secret.db.arn
-      BEDROCK_MODEL_ID = var.bedrock_model_id
-      EMBEDDING_DIM    = tostring(var.embedding_dim)
+      SECRET_ARN         = aws_secretsmanager_secret.db.arn
+      BEDROCK_MODEL_ID   = var.bedrock_model_id
+      EMBEDDING_DIM      = tostring(var.embedding_dim)
+      SECRET_ARN_2       = aws_secretsmanager_secret.db2.arn
+      BEDROCK_MODEL_ID_2 = var.bedrock_model_id_2
     }
   }
 
@@ -334,4 +342,44 @@ resource "aws_appsync_resolver" "retrieve" {
   EOT
 
   response_template = "$util.toJson($ctx.result)"
+}
+
+# ─── Second data source: HR policy RDS ───────────────────────────────────────
+resource "random_password" "db2" {
+  length  = 24
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "db2" {
+  name                    = "${local.name}/db2"
+  recovery_window_in_days = 0
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "db2" {
+  secret_id = aws_secretsmanager_secret.db2.id
+  secret_string = jsonencode({
+    username = var.db_username_2
+    password = random_password.db2.result
+    host     = aws_db_instance.postgres2.address
+    port     = 5432
+    dbname   = var.db_name_2
+  })
+}
+
+resource "aws_db_instance" "postgres2" {
+  identifier             = "${local.name}-hr-db"
+  engine                 = "postgres"
+  engine_version         = "16.6"
+  instance_class         = var.db_instance_class
+  allocated_storage      = 20
+  db_name                = var.db_name_2
+  username               = var.db_username_2
+  password               = random_password.db2.result
+  db_subnet_group_name   = aws_db_subnet_group.postgres.name
+  vpc_security_group_ids = [aws_security_group.rds.id]
+  publicly_accessible    = true
+  skip_final_snapshot    = true
+  multi_az               = false
+  tags                   = local.tags
 }

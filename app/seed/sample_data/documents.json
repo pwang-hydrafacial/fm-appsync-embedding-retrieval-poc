@@ -14,5 +14,47 @@
         "source": "sample-doc-1"
       }
     ]
+  },
+  {
+    "documentId": "doc-002",
+    "title": "Call center quality and compliance",
+    "chunks": [
+      {
+        "chunkId": "chunk-003",
+        "text": "All customer calls must be recorded for quality assurance and regulatory compliance.",
+        "source": "sample-doc-2"
+      },
+      {
+        "chunkId": "chunk-004",
+        "text": "Agents are required to read the disclosure script at the start of each servicing call.",
+        "source": "sample-doc-2"
+      },
+      {
+        "chunkId": "chunk-005",
+        "text": "Payment arrangements must be documented in the system within 24 hours of the customer agreement.",
+        "source": "sample-doc-2"
+      }
+    ]
+  },
+  {
+    "documentId": "doc-003",
+    "title": "Customer interaction guidelines",
+    "chunks": [
+      {
+        "chunkId": "chunk-006",
+        "text": "Agents should use the customer's name at least twice during the call to build rapport.",
+        "source": "sample-doc-3"
+      },
+      {
+        "chunkId": "chunk-007",
+        "text": "Never place a customer on hold for more than three minutes without providing a status update.",
+        "source": "sample-doc-3"
+      },
+      {
+        "chunkId": "chunk-008",
+        "text": "If a customer requests a supervisor, transfer the call within two minutes and document the reason.",
+        "source": "sample-doc-3"
+      }
+    ]
   }
 ]

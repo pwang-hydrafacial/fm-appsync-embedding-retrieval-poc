@@ -1,13 +1,13 @@
 """
-Seed sample documents into RDS pgvector.
-Reads RDS connection info from Terraform outputs + Secrets Manager.
-Embeds each chunk with Bedrock Titan Embed v2 before inserting.
+Seed sample data into both RDS pgvector instances.
+Source 1 (document_chunks): call-center docs embedded with Bedrock Titan Embed v2.
+Source 2 (policy_chunks):   HR policies embedded with Cohere Embed English v3.
+Reads connection info from Terraform outputs + Secrets Manager.
 Run after `make tf-apply`.
 """
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import boto3
@@ -15,6 +15,7 @@ import pg8000.native
 
 
 SAMPLE_DOCS = Path(__file__).parent / "sample_data" / "documents.json"
+SAMPLE_POLICIES = Path(__file__).parent / "sample_data" / "hr_policies.json"
 EMBEDDING_DIM = 1024
 
 
@@ -31,7 +32,7 @@ def get_db_creds(secret_arn: str, region: str) -> dict:
     return json.loads(sm.get_secret_value(SecretId=secret_arn)["SecretString"])
 
 
-def embed(text: str, bedrock, model_id: str) -> list[float]:
+def embed_titan(text: str, bedrock, model_id: str) -> list[float]:
     body = json.dumps({"inputText": text, "dimensions": EMBEDDING_DIM, "normalize": True})
     resp = bedrock.invoke_model(
         modelId=model_id,
@@ -42,16 +43,18 @@ def embed(text: str, bedrock, model_id: str) -> list[float]:
     return json.loads(resp["body"].read())["embedding"]
 
 
-def main():
-    profile = os.environ.get("AWS_PROFILE", "default")
-    region = os.environ.get("AWS_REGION", "us-east-1")
+def embed_cohere(text: str, bedrock, model_id: str) -> list[float]:
+    body = json.dumps({"texts": [text], "input_type": "search_document"})
+    resp = bedrock.invoke_model(
+        modelId=model_id,
+        body=body,
+        contentType="application/json",
+        accept="application/json",
+    )
+    return json.loads(resp["body"].read())["embeddings"][0]
 
-    print(f"Using AWS_PROFILE={profile} AWS_REGION={region}")
 
-    outputs = tf_outputs()
-    secret_arn = outputs["secret_arn"]
-    creds = get_db_creds(secret_arn, region)
-
+def seed_source1(creds: dict, bedrock, region: str) -> int:
     conn = pg8000.native.Connection(
         host=creds["host"],
         port=int(creds["port"]),
@@ -59,8 +62,7 @@ def main():
         user=creds["username"],
         password=creds["password"],
     )
-
-    print("Connected to RDS. Setting up schema...")
+    print("\n[Source 1] Connected to documents RDS. Setting up schema...")
     conn.run("CREATE EXTENSION IF NOT EXISTS vector")
     conn.run(f"""
         CREATE TABLE IF NOT EXISTS document_chunks (
@@ -71,17 +73,14 @@ def main():
             embedding     vector({EMBEDDING_DIM})
         )
     """)
-    # IVFFlat needs ~100+ rows to be effective; skip index for small POC datasets
 
-    bedrock = boto3.client("bedrock-runtime", region_name=region)
     model_id = "amazon.titan-embed-text-v2:0"
     docs = json.loads(SAMPLE_DOCS.read_text())
-
     inserted = 0
     for doc in docs:
         for chunk in doc["chunks"]:
-            print(f"  Embedding {chunk['chunkId']}...")
-            vec = embed(chunk["text"], bedrock, model_id)
+            print(f"  Embedding {chunk['chunkId']} (Titan v2)...")
+            vec = embed_titan(chunk["text"], bedrock, model_id)
             vec_str = "[" + ",".join(str(v) for v in vec) + "]"
             conn.run(
                 """
@@ -100,7 +99,77 @@ def main():
             inserted += 1
 
     conn.close()
-    print(f"Done. Inserted/updated {inserted} chunks.")
+    return inserted
+
+
+def seed_source2(creds: dict, bedrock, region: str) -> int:
+    conn = pg8000.native.Connection(
+        host=creds["host"],
+        port=int(creds["port"]),
+        database=creds["dbname"],
+        user=creds["username"],
+        password=creds["password"],
+    )
+    print("\n[Source 2] Connected to HR policy RDS. Setting up schema...")
+    conn.run("CREATE EXTENSION IF NOT EXISTS vector")
+    conn.run(f"""
+        CREATE TABLE IF NOT EXISTS policy_chunks (
+            chunk_id    TEXT PRIMARY KEY,
+            policy_id   TEXT NOT NULL,
+            text        TEXT NOT NULL,
+            category    TEXT,
+            source      TEXT,
+            embedding   vector({EMBEDDING_DIM})
+        )
+    """)
+
+    model_id = "cohere.embed-english-v3"
+    policies = json.loads(SAMPLE_POLICIES.read_text())
+    inserted = 0
+    for policy in policies:
+        for chunk in policy["chunks"]:
+            print(f"  Embedding {chunk['chunkId']} (Cohere English v3)...")
+            vec = embed_cohere(chunk["text"], bedrock, model_id)
+            vec_str = "[" + ",".join(str(v) for v in vec) + "]"
+            conn.run(
+                """
+                INSERT INTO policy_chunks (chunk_id, policy_id, text, category, source, embedding)
+                VALUES (:chunk_id, :policy_id, :text, :category, :source, :vec::vector)
+                ON CONFLICT (chunk_id) DO UPDATE
+                    SET text = EXCLUDED.text,
+                        category = EXCLUDED.category,
+                        embedding = EXCLUDED.embedding
+                """,
+                chunk_id=chunk["chunkId"],
+                policy_id=policy["policyId"],
+                text=chunk["text"],
+                category=policy.get("category"),
+                source=chunk.get("source"),
+                vec=vec_str,
+            )
+            inserted += 1
+
+    conn.close()
+    return inserted
+
+
+def main():
+    profile = os.environ.get("AWS_PROFILE", "default")
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    print(f"Using AWS_PROFILE={profile} AWS_REGION={region}")
+
+    outputs = tf_outputs()
+    bedrock = boto3.client("bedrock-runtime", region_name=region)
+
+    creds1 = get_db_creds(outputs["secret_arn"], region)
+    n1 = seed_source1(creds1, bedrock, region)
+    print(f"[Source 1] Done. Inserted/updated {n1} chunks.")
+
+    creds2 = get_db_creds(outputs["secret_arn_2"], region)
+    n2 = seed_source2(creds2, bedrock, region)
+    print(f"[Source 2] Done. Inserted/updated {n2} chunks.")
+
+    print(f"\nTotal: {n1 + n2} chunks across both sources.")
 
 
 if __name__ == "__main__":

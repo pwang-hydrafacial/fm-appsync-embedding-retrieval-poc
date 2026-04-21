@@ -32,3 +32,18 @@ variable "embedding_dim" {
   type    = number
   default = 1024
 }
+
+variable "db_name_2" {
+  type    = string
+  default = "hrpolicydb"
+}
+
+variable "db_username_2" {
+  type    = string
+  default = "appadmin"
+}
+
+variable "bedrock_model_id_2" {
+  type    = string
+  default = "cohere.embed-english-v3"
+}
