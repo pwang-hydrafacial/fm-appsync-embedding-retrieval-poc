@@ -328,7 +328,7 @@ resource "aws_appsync_datasource" "lambda" {
 resource "aws_appsync_resolver" "retrieve" {
   api_id      = aws_appsync_graphql_api.main.id
   type        = "Query"
-  field       = "retrieve"
+  field       = "retrieveMatchingDocuments"
   data_source = aws_appsync_datasource.lambda.name
 
   request_template = <<-EOT

@@ -11,16 +11,30 @@ import sys
 
 
 GRAPHQL_QUERY = """
-query Retrieve($queryText: String!, $topK: Int) {
-  retrieve(queryText: $queryText, topK: $topK) {
+query RetrieveMatchingDocuments($queryText: String!, $topK: Int) {
+  retrieveMatchingDocuments(queryText: $queryText, topK: $topK) {
     queryText
-    matches {
+    totalResults
+    hasMore
+    hrPolicyDocuments {
       documentId
       chunkId
       text
       similarityScore
       source
-      dataSource
+      metadata {
+        category
+      }
+    }
+    callCenterDocuments {
+      documentId
+      chunkId
+      text
+      similarityScore
+      source
+      metadata {
+        category
+      }
     }
   }
 }
@@ -49,6 +63,15 @@ def call_appsync(url: str, api_key: str, query_text: str, top_k: int) -> dict:
         return json.loads(resp.read())
 
 
+def print_docs(label: str, docs: list) -> None:
+    print(f"\n{label} ({len(docs)}):")
+    for i, d in enumerate(docs, 1):
+        category = (d.get("metadata") or {}).get("category", "")
+        cat_str = f"  category={category}" if category else ""
+        print(f"  [{i}] score={d['similarityScore']:.4f}  source={d['source']}{cat_str}")
+        print(f"      {d['text']}\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Semantic retrieval via AppSync")
     parser.add_argument("--query", "-q", required=True, help="Text question to search")
@@ -65,12 +88,11 @@ def main():
         print("GraphQL errors:", json.dumps(result["errors"], indent=2), file=sys.stderr)
         sys.exit(1)
 
-    matches = result["data"]["retrieve"]["matches"]
+    data = result["data"]["retrieveMatchingDocuments"]
     print(f"\nQuery: {args.query}")
-    print(f"Matches ({len(matches)}):\n")
-    for i, m in enumerate(matches, 1):
-        print(f"  [{i}] score={m['similarityScore']:.4f}  source={m['source']}  dataSource={m['dataSource']}")
-        print(f"      {m['text']}\n")
+    print(f"Total results: {data['totalResults']}")
+    print_docs("HR Policy Documents", data["hrPolicyDocuments"])
+    print_docs("Call Center Documents", data["callCenterDocuments"])
 
 
 if __name__ == "__main__":

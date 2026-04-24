@@ -38,7 +38,7 @@ AWS Console → Bedrock → Model access → Request access
 
 ## Live endpoints
 
-AppSync: `https://2z6hnrajhbegroeifhotiqxlse.appsync-api.us-east-1.amazonaws.com/graphql`  
+AppSync: `https://ja56hynuandyzbs2offjausw7q.appsync-api.us-east-1.amazonaws.com/graphql`  
 RDS 1: `fm-appsync-embedding-retrieval-poc-db.cm2vcfi9brtn.us-east-1.rds.amazonaws.com`  
 RDS 2: `fm-appsync-embedding-retrieval-poc-hr-db.cm2vcfi9brtn.us-east-1.rds.amazonaws.com`
 
@@ -53,5 +53,5 @@ make query q="What do I do with a servicing exception?"     # routes to document
 ## Notes
 
 - Two RDS instances running simultaneously costs ~$40/month. Destroy when idle.
-- `dataSource` field in each match tells you which backend returned it.
-- Cross-model similarity scores are approximately comparable; rankings are reliable, absolute score values are not cross-calibrated.
+- Each query always returns both `hrPolicyDocuments` and `callCenterDocuments`. Each list is ranked independently within its own source.
+- `metadata.category` is populated for HR policy results (e.g. `onboarding`, `leave`, `performance`); call-center results return `null` metadata.
