@@ -1,17 +1,37 @@
 type Query {
-  retrieve(queryText: String!, topK: Int = 5): RetrievalResponse!
+  retrieveMatchingDocuments(queryText: String!, topK: Int = 5, nextToken: String): RetrievalResponse!
 }
 
 type RetrievalResponse {
   queryText: String!
-  matches: [RetrievalMatch!]!
+  hrPolicyDocuments: [HRPolicyDocument!]!
+  callCenterDocuments: [CallCenterDocument!]!
+  totalResults: Int
+  hasMore: Boolean
+  nextToken: String
 }
 
-type RetrievalMatch {
+type HRPolicyDocument {
   documentId: String!
   chunkId: String!
   text: String!
   similarityScore: Float!
   source: String
-  dataSource: String
+  metadata: DocumentMetadata
+}
+
+type CallCenterDocument {
+  documentId: String!
+  chunkId: String!
+  text: String!
+  similarityScore: Float!
+  source: String
+  metadata: DocumentMetadata
+}
+
+type DocumentMetadata {
+  title: String
+  category: String
+  createdAt: String
+  updatedAt: String
 }

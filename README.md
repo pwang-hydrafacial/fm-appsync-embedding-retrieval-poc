@@ -63,25 +63,32 @@ make -C look rds-query
 Sample output:
 ```
 Query: What is the leave policy?
-Matches (5):
+Total results: 10
 
-  [1] score=0.4116  source=hr-policy-leave  dataSource=hr-policies
+HR Policy Documents (5):
+  [1] score=0.4116  source=hr-policy-leave  category=leave
       Parental leave of up to 12 weeks is available for primary caregivers following the birth or adoption of a child.
 
-  [2] score=0.3624  source=hr-policy-leave  dataSource=hr-policies
+  [2] score=0.3624  source=hr-policy-leave  category=leave
       Requests for leave exceeding five consecutive days must be submitted at least two weeks in advance.
 
-  [3] score=0.3227  source=hr-policy-leave  dataSource=hr-policies
+  [3] score=0.3227  source=hr-policy-leave  category=leave
       Employees accrue 1.5 days of paid time off per month, up to a maximum of 18 days per calendar year.
 
-  [4] score=0.2243  source=hr-policy-onboarding  dataSource=hr-policies
+  [4] score=0.2243  source=hr-policy-onboarding  category=onboarding
       All new hires must complete mandatory compliance training within the first 30 days of employment.
 
-  [5] score=0.2070  source=hr-policy-performance  dataSource=hr-policies
+  [5] score=0.2070  source=hr-policy-performance  category=performance
       Employees receiving a below-expectations rating must complete a 60-day performance improvement plan.
+
+
+Call Center Documents (5):
+  [1] score=0.0942  source=sample-doc-1
+      Agents should verify customer identity before discussing loan details.
+  ...
 ```
 
-The `dataSource` field tells you which backend database each match came from.
+Each query always returns both `hrPolicyDocuments` and `callCenterDocuments` — each list ranked independently within its own source.
 
 ---
 
@@ -126,10 +133,9 @@ CLI client
   → AppSync (GraphQL, API_KEY auth)
     → Lambda resolver
       → Secrets Manager (credentials for both DBs)
-      → Bedrock Titan Embed v2    → RDS1 (document_chunks) cosine search
-      → Bedrock Cohere Embed v3   → RDS2 (policy_chunks)   cosine search
-      → merge + re-rank by score
-    ← top-K matches with dataSource labels
+      → Bedrock Titan Embed v2    → RDS1 (document_chunks) cosine search → callCenterDocuments
+      → Bedrock Cohere Embed v3   → RDS2 (policy_chunks)   cosine search → hrPolicyDocuments
+    ← two typed lists, each ranked independently within its source
 ```
 
 **Networking:** Lambda runs inside a VPC (private subnets). Both Bedrock models and Secrets Manager are reached via VPC interface endpoints (no NAT gateway). Both RDS instances are publicly accessible so the seed script can connect from your local machine.
@@ -146,7 +152,7 @@ CLI client
 | AppSync | API_KEY auth, expires 2027-04-16 |
 | VPC endpoints | Bedrock Runtime + Secrets Manager |
 
-AppSync URL: `https://2z6hnrajhbegroeifhotiqxlse.appsync-api.us-east-1.amazonaws.com/graphql`  
+AppSync URL: `https://ja56hynuandyzbs2offjausw7q.appsync-api.us-east-1.amazonaws.com/graphql`  
 RDS source 1: `fm-appsync-embedding-retrieval-poc-db.cm2vcfi9brtn.us-east-1.rds.amazonaws.com`  
 RDS source 2: `fm-appsync-embedding-retrieval-poc-hr-db.cm2vcfi9brtn.us-east-1.rds.amazonaws.com`
 

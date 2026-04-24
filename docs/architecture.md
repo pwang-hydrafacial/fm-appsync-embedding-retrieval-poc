@@ -2,7 +2,7 @@
 
 ## Overview
 
-This POC implements semantic retrieval over GraphQL across two independent data sources. A client submits a plain-English question; the system fans out to both backends, merges the results, re-ranks by cosine similarity, and returns the top-K matching text passages — without exposing any vector math externally.
+This POC implements semantic retrieval over GraphQL across two independent data sources. A client submits a plain-English question; the system fans out to both backends and returns results in two separate typed lists — HR policy documents and call-center documents — each ranked by cosine similarity within their own source. No vector math is exposed externally.
 
 Each data source uses a different embedding model and a slightly different database schema, demonstrating that the retrieval layer can federate over heterogeneous vector stores behind a single unified API.
 
@@ -34,10 +34,10 @@ flowchart LR
     Lambda -->|vec search| RDS1
     Lambda -->|vec search| RDS2
 
-    RDS1 -.->|matches| Lambda
-    RDS2 -.->|matches| Lambda
-    Lambda -.->|merged + ranked| AppSync
-    AppSync -.->|ranked text matches| CLI
+    RDS1 -.->|callCenterDocuments| Lambda
+    RDS2 -.->|hrPolicyDocuments| Lambda
+    Lambda -.->|two typed lists| AppSync
+    AppSync -.->|hrPolicyDocuments + callCenterDocuments| CLI
 
     style RDS1 fill:#4472C4,stroke:#2E5090,color:#fff
     style RDS2 fill:#70AD47,stroke:#4E7C30,color:#fff
@@ -49,7 +49,7 @@ flowchart LR
 
 ### AWS AppSync
 - GraphQL API with `API_KEY` authentication
-- Single query: `retrieve(queryText: String!, topK: Int): RetrievalResponse!`
+- Single query: `retrieveMatchingDocuments(queryText: String!, topK: Int, nextToken: String): RetrievalResponse!`
 - Routes all requests to the Lambda data source via a VTL resolver
 - The client is unaware of how many backends are queried or which embedding model is used
 
@@ -60,7 +60,7 @@ The resolver is split into four modules, each with a single responsibility:
 ```
 app/lambda/
 ├── handler.py       — AppSync entry point, parses event
-├── retrieval.py     — fans out to both sources, merges, re-ranks
+├── retrieval.py     — fans out to both sources, returns two typed lists
 ├── bedrock_embed.py — embed_titan() and embed_cohere() functions
 └── db.py            — search_source1() and search_source2() functions
 ```
@@ -74,28 +74,33 @@ def handler(event, context):
     args = event.get("arguments", {})
     query_text = args.get("queryText", "")
     top_k = args.get("topK", 5)
+    hr_docs, cc_docs = retrieve_matches_split(query_text=query_text, top_k=top_k)
     return {
         "queryText": query_text,
-        "matches": retrieve_matches(query_text=query_text, top_k=top_k),
+        "hrPolicyDocuments": hr_docs,
+        "callCenterDocuments": cc_docs,
+        "totalResults": len(hr_docs) + len(cc_docs),
+        "hasMore": False,
+        "nextToken": None,
     }
 ```
 
 #### `retrieval.py` — fan-out orchestrator
 
-Embeds the query with both models, queries both databases, merges and re-ranks:
+Embeds the query with both models and queries both databases, returning two separate lists:
 
 ```python
-def retrieve_matches(query_text: str, top_k: int = 5):
+def retrieve_matches_split(query_text: str, top_k: int = 5):
     if not query_text:
-        return []
+        return [], []
     emb1 = embed_titan(query_text)
     emb2 = embed_cohere(query_text)
-    merged = search_source1(emb1, top_k) + search_source2(emb2, top_k)
-    merged.sort(key=lambda x: x["similarityScore"], reverse=True)
-    return merged[:top_k]
+    cc_docs = search_source1(emb1, top_k)
+    hr_docs = search_source2(emb2, top_k)
+    return hr_docs, cc_docs
 ```
 
-The merge strategy is simple: collect up to `topK` candidates from each source, sort the combined list by similarity score descending, return the overall top-K. This means the final result can contain any mix of sources depending on query relevance.
+Each source returns its own top-K results, ranked by cosine similarity within that source. Results are not merged or re-ranked across sources — the typed lists in the response make the source of each result explicit.
 
 #### `bedrock_embed.py` — two embedding functions
 
@@ -139,16 +144,16 @@ def search_source1(embedding, top_k=5):
                1 - (embedding <=> CAST(:vec AS vector)) AS similarity_score
         FROM document_chunks ORDER BY ... LIMIT :k
     """, ...)
-    return [{..., "dataSource": "documents"} for r in rows]
+    return [{"chunkId": r[0], ..., "metadata": None} for r in rows]
 
 def search_source2(embedding, top_k=5):
     conn = _connect(os.environ["SECRET_ARN_2"])      # RDS2
     rows = conn.run("""
-        SELECT chunk_id, policy_id, text, source,
+        SELECT chunk_id, policy_id, text, source, category,
                1 - (embedding <=> CAST(:vec AS vector)) AS similarity_score
         FROM policy_chunks ORDER BY ... LIMIT :k
     """, ...)
-    return [{..., "dataSource": "hr-policies"} for r in rows]
+    return [{"chunkId": r[0], ..., "metadata": {"category": r[4]} if r[4] else None} for r in rows]
 ```
 
 Notes:
@@ -156,7 +161,7 @@ Notes:
 - `1 - distance` converts to similarity score (higher = better match)
 - `CAST(:vec AS vector)` avoids a pg8000 named-parameter parsing conflict with `::vector`
 - `pg8000.native` is pure Python — no compiled binary needed in the Lambda layer
-- Each function tags results with `"dataSource"` so the caller knows the origin
+- `search_source2` fetches the `category` column and surfaces it through `metadata.category`
 
 ---
 
@@ -170,7 +175,7 @@ Notes:
 | Seeding `input_type` | N/A | `"search_document"` |
 | Query `input_type` | N/A | `"search_query"` |
 
-Both produce 1024-dimensional unit-normalized vectors, making cosine similarity scores approximately comparable in the `[0, 1]` range. Cross-model score comparison is an approximation — scores are not calibrated across different model training runs — but it is sufficient for POC-scale ranking.
+Both produce 1024-dimensional unit-normalized vectors, making cosine similarity scores approximately comparable in the `[0, 1]` range within each source.
 
 ---
 
@@ -209,11 +214,11 @@ CREATE TABLE policy_chunks (
 );
 ```
 
-The schemas are intentionally slightly different: `policy_id` instead of `document_id`, and an additional `category` column that captures policy classification. The `category` is stored in the DB but not surfaced through the GraphQL API, keeping the external contract stable. The Lambda maps `policy_id` to the `documentId` response field for both sources.
+The schemas are intentionally slightly different: `policy_id` instead of `document_id`, and an additional `category` column that captures policy classification. `category` is now surfaced through the GraphQL API via `HRPolicyDocument.metadata.category`. The Lambda maps `policy_id` to the `documentId` response field for both sources.
 
 **Search query pattern (identical for both tables):**
 ```sql
-SELECT chunk_id, <id_col>, text, source,
+SELECT chunk_id, <id_col>, text, source, [category,]
        1 - (embedding <=> CAST(:vec AS vector)) AS similarity_score
 FROM <table>
 ORDER BY embedding <=> CAST(:vec AS vector)
@@ -276,25 +281,45 @@ Both sources are seeded in a single `make seed` run. Cohere seeding uses `input_
 
 ```graphql
 type Query {
-  retrieve(queryText: String!, topK: Int = 5): RetrievalResponse!
+  retrieveMatchingDocuments(queryText: String!, topK: Int = 5, nextToken: String): RetrievalResponse!
 }
 
 type RetrievalResponse {
   queryText: String!
-  matches: [RetrievalMatch!]!
+  hrPolicyDocuments: [HRPolicyDocument!]!
+  callCenterDocuments: [CallCenterDocument!]!
+  totalResults: Int
+  hasMore: Boolean
+  nextToken: String
 }
 
-type RetrievalMatch {
-  documentId:      String!
-  chunkId:         String!
-  text:            String!
+type HRPolicyDocument {
+  documentId: String!
+  chunkId: String!
+  text: String!
   similarityScore: Float!
-  source:          String
-  dataSource:      String   # "documents" or "hr-policies"
+  source: String
+  metadata: DocumentMetadata
+}
+
+type CallCenterDocument {
+  documentId: String!
+  chunkId: String!
+  text: String!
+  similarityScore: Float!
+  source: String
+  metadata: DocumentMetadata
+}
+
+type DocumentMetadata {
+  title: String
+  category: String
+  createdAt: String
+  updatedAt: String
 }
 ```
 
-The client never sends or receives a vector. `dataSource` was added in Phase 2 as a nullable field — backward-compatible with Phase 1 clients.
+The client never sends or receives a vector. The two typed lists make the source of each result explicit without requiring a `dataSource` tag on individual items.
 
 ---
 
@@ -317,8 +342,9 @@ Run `make tf-destroy` to stop all charges.
 |---|---|
 | Two separate RDS instances | Maximum isolation between data sources; each can be sized, versioned, or destroyed independently |
 | Different embedding models per source | Demonstrates multi-model federation; Cohere has different tokenization and training data than Titan |
-| Merged re-rank by cosine score | Simple and effective at POC scale; cross-model scores are approximately comparable on the `[0,1]` range |
-| `dataSource` field in response | Lets the client see which backend produced each result without changing the overall query shape |
+| Typed result lists (hrPolicyDocuments / callCenterDocuments) | Makes the two-source demo story immediately visible; each source is ranked independently, removing the need for cross-model score calibration |
+| DocumentMetadata in schema | Surfaces `category` from `policy_chunks` through the API; call-center docs return null metadata, demonstrating the schemas differ |
+| `nextToken` in query input | Pagination infrastructure stub; `hasMore` is always false at POC scale but the shape is production-ready |
 | Same subnet group for both RDS | Subnet groups are a logical grouping of subnets, not bound to a single instance; reusing avoids redundant infrastructure |
 | Single Lambda resolver | Simplest path; pipeline resolver is a later option |
 | pgvector over a managed vector DB | Reuses existing RDS skill; cheap; destroyable |

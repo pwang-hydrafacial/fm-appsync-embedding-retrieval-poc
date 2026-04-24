@@ -32,20 +32,20 @@ export AWS_REGION=us-east-1
 Seven resources are required, in dependency order:
 
 ```
-1. Lambda function     ← the resolver backend (embed + search + merge)
+1. Lambda function     ← the resolver backend (embed + search → two typed lists)
 2. GraphQL API         ← top-level AppSync container
 3. API key             ← authentication credential (x-api-key header)
 4. GraphQL schema      ← SDL contract uploaded to the API
 5. IAM role            ← grants AppSync permission to invoke Lambda
 6. Lambda data source  ← registers Lambda as a named backend in AppSync
-7. Resolver            ← binds Query.retrieve → Lambda data source
+7. Resolver            ← binds Query.retrieveMatchingDocuments → Lambda data source
 ```
 
 ---
 
 ## Step 1 — Deploy the Lambda resolver function
 
-The Lambda function is the retrieval backend. It embeds the query with both Bedrock models, queries both RDS instances, and returns merged results.
+The Lambda function is the retrieval backend. It embeds the query with both Bedrock models, queries both RDS instances, and returns two separate typed lists — `hrPolicyDocuments` and `callCenterDocuments`.
 
 **Console:**
 Navigate to: **AWS Console → Lambda → Functions → Create function**
@@ -217,21 +217,41 @@ aws appsync get-schema-creation-status --api-id $API_ID
 Current schema (`app/graphql/schema.graphql`):
 ```graphql
 type Query {
-  retrieve(queryText: String!, topK: Int = 5): RetrievalResponse!
+  retrieveMatchingDocuments(queryText: String!, topK: Int = 5, nextToken: String): RetrievalResponse!
 }
 
 type RetrievalResponse {
   queryText: String!
-  matches: [RetrievalMatch!]!
+  hrPolicyDocuments: [HRPolicyDocument!]!
+  callCenterDocuments: [CallCenterDocument!]!
+  totalResults: Int
+  hasMore: Boolean
+  nextToken: String
 }
 
-type RetrievalMatch {
-  documentId:      String!
-  chunkId:         String!
-  text:            String!
+type HRPolicyDocument {
+  documentId: String!
+  chunkId: String!
+  text: String!
   similarityScore: Float!
-  source:          String
-  dataSource:      String
+  source: String
+  metadata: DocumentMetadata
+}
+
+type CallCenterDocument {
+  documentId: String!
+  chunkId: String!
+  text: String!
+  similarityScore: Float!
+  source: String
+  metadata: DocumentMetadata
+}
+
+type DocumentMetadata {
+  title: String
+  category: String
+  createdAt: String
+  updatedAt: String
 }
 ```
 
@@ -314,16 +334,16 @@ aws appsync create-data-source \
 
 ## Step 7 — Create the resolver
 
-Binds `Query.retrieve` to the `LambdaRetrieval` data source using VTL mapping templates.
+Binds `Query.retrieveMatchingDocuments` to the `LambdaRetrieval` data source using VTL mapping templates.
 The request template wraps GraphQL arguments into the Lambda event payload; the response template passes the result through unchanged.
 
 **Console:**
-Navigate to: **AWS Console → AppSync → [API name] → Schema → click `retrieve` field on Query type → Attach resolver**
+Navigate to: **AWS Console → AppSync → [API name] → Schema → click `retrieveMatchingDocuments` field on Query type → Attach resolver**
 URL: `https://console.aws.amazon.com/appsync/home?region=us-east-1#/apis/${API_ID}/v1/schema`
 ```bash
 make -C look schema APPSYNC_API_ID=$API_ID
 ```
-In the console: **Schema → click `retrieve` under the `Query` type → Attach resolver → Data source: `LambdaRetrieval` → paste templates below → Save resolver**.
+In the console: **Schema → click `retrieveMatchingDocuments` under the `Query` type → Attach resolver → Data source: `LambdaRetrieval` → paste templates below → Save resolver**.
 
 Request mapping template:
 ```vtl
@@ -346,7 +366,7 @@ $util.toJson($ctx.result)
 aws appsync create-resolver \
   --api-id $API_ID \
   --type-name Query \
-  --field-name retrieve \
+  --field-name retrieveMatchingDocuments \
   --data-source-name LambdaRetrieval \
   --request-mapping-template \
     '{"version":"2018-05-29","operation":"Invoke","payload":{"arguments":$util.toJson($ctx.args)}}' \
@@ -381,7 +401,7 @@ API_KEY=$(aws appsync list-api-keys \
 curl -s -X POST "$APPSYNC_URL" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
-  -d '{"query":"query { retrieve(queryText: \"What is the leave policy?\") { matches { text similarityScore dataSource } } }"}' \
+  -d '{"query":"query { retrieveMatchingDocuments(queryText: \"What is the leave policy?\") { totalResults hrPolicyDocuments { text similarityScore } callCenterDocuments { text similarityScore } } }"}' \
   | python3 -m json.tool
 ```
 
@@ -406,7 +426,7 @@ make smoke
 | AppSync IAM policy | `fm-appsync-embedding-retrieval-poc-appsync-policy` |
 | Data source name | `LambdaRetrieval` |
 | Data source type | `AWS_LAMBDA` |
-| Resolver type + field | `Query.retrieve` |
+| Resolver type + field | `Query.retrieveMatchingDocuments` |
 
 ---
 
@@ -416,7 +436,7 @@ To remove just the AppSync resources without touching Lambda or RDS:
 
 ```bash
 # Delete resolver first (it depends on the data source)
-aws appsync delete-resolver --api-id $API_ID --type-name Query --field-name retrieve
+aws appsync delete-resolver --api-id $API_ID --type-name Query --field-name retrieveMatchingDocuments
 
 # Delete data source
 aws appsync delete-data-source --api-id $API_ID --name LambdaRetrieval

@@ -1,9 +1,9 @@
 # Demo: AppSync Semantic Retrieval POC
 
 This is a running POC for semantic search over GraphQL on AWS.
-A client sends a plain-English question and gets back ranked text passages from two independent knowledge bases — no vector math exposed externally, no indication to the caller of how many backends were queried.
+A client sends a plain-English question and gets back ranked text passages from two independent knowledge bases — each source returned as its own typed list, making the origin of every result immediately visible. No vector math is exposed externally, no indication to the caller of how many backends were queried.
 
-Phase 2 adds a second data source (HR policies, embedded with Cohere Embed English v3) alongside the original call-center document store (embedded with Amazon Titan Embed v2). Both sources are queried on every request, and results are merged and re-ranked by cosine similarity before the response is returned.
+Both data sources are queried on every request. Source 1 (call-center documents) is embedded with Amazon Titan Embed v2; Source 2 (HR policies) is embedded with Cohere Embed English v3. Each source is ranked by cosine similarity within itself and returned under its own field in the response.
 
 ---
 
@@ -33,10 +33,10 @@ flowchart LR
     Lambda -->|vec search| RDS1
     Lambda -->|vec search| RDS2
 
-    RDS1 -.->|matches| Lambda
-    RDS2 -.->|matches| Lambda
-    Lambda -.->|merged + ranked| AppSync
-    AppSync -.->|ranked text matches| CLI
+    RDS1 -.->|callCenterDocuments| Lambda
+    RDS2 -.->|hrPolicyDocuments| Lambda
+    Lambda -.->|two typed lists| AppSync
+    AppSync -.->|hrPolicyDocuments + callCenterDocuments| CLI
 
     style RDS1 fill:#4472C4,stroke:#2E5090,color:#fff
     style RDS2 fill:#70AD47,stroke:#4E7C30,color:#fff
@@ -64,12 +64,12 @@ sequenceDiagram
     L->>B2: embed(queryText)
     B2-->>L: 1024-dim vector
     L->>DB1: cosine search — document_chunks
-    DB1-->>L: top-K matches
+    DB1-->>L: top-K callCenterDocuments
     L->>DB2: cosine search — policy_chunks
-    DB2-->>L: top-K matches
-    Note over L: merge + sort by score → top-K
+    DB2-->>L: top-K hrPolicyDocuments
+    Note over L: rank each source independently
     L-->>AS: RetrievalResponse
-    AS-->>CLI: ranked text matches
+    AS-->>CLI: hrPolicyDocuments + callCenterDocuments
 ```
 
 Everything is Terraform-managed and destroyable with one command.
@@ -80,25 +80,43 @@ Everything is Terraform-managed and destroyable with one command.
 
 ### GraphQL Schema
 
-The external contract is unchanged from Phase 1 except for the new nullable `dataSource` field — existing clients continue to work.
-
 ```graphql
 type Query {
-  retrieve(queryText: String!, topK: Int = 5): RetrievalResponse!
+  retrieveMatchingDocuments(queryText: String!, topK: Int = 5, nextToken: String): RetrievalResponse!
 }
 
 type RetrievalResponse {
   queryText: String!
-  matches: [RetrievalMatch!]!
+  hrPolicyDocuments: [HRPolicyDocument!]!
+  callCenterDocuments: [CallCenterDocument!]!
+  totalResults: Int
+  hasMore: Boolean
+  nextToken: String
 }
 
-type RetrievalMatch {
-  documentId:      String!
-  chunkId:         String!
-  text:            String!
+type HRPolicyDocument {
+  documentId: String!
+  chunkId: String!
+  text: String!
   similarityScore: Float!
-  source:          String
-  dataSource:      String    # "documents" or "hr-policies"
+  source: String
+  metadata: DocumentMetadata
+}
+
+type CallCenterDocument {
+  documentId: String!
+  chunkId: String!
+  text: String!
+  similarityScore: Float!
+  source: String
+  metadata: DocumentMetadata
+}
+
+type DocumentMetadata {
+  title: String
+  category: String
+  createdAt: String
+  updatedAt: String
 }
 ```
 
@@ -129,19 +147,15 @@ CREATE TABLE policy_chunks (
 );
 ```
 
-The two schemas are intentionally slightly different. The `policy_chunks` table uses `policy_id` instead of `document_id` and carries an extra `category` column for HR-specific classification. The Lambda normalizes both into the common `RetrievalMatch` response type; `category` is stored in the DB but not exposed externally.
+The two schemas are intentionally slightly different. The `policy_chunks` table uses `policy_id` instead of `document_id` and carries an extra `category` column for HR-specific classification. `category` is now surfaced through the API via `HRPolicyDocument.metadata.category`.
 
-### The Merge Step
+### Two Typed Result Lists
 
-After collecting up to `topK` candidates from each source, the Lambda sorts the combined pool by `similarityScore` descending and returns the overall top-K:
+Every request fans out to both sources and always returns both `hrPolicyDocuments` and `callCenterDocuments`. Each list is ranked independently by cosine similarity within its own source — there is no cross-source merging or re-ranking. This means:
 
-```python
-merged = search_source1(emb1, top_k) + search_source2(emb2, top_k)
-merged.sort(key=lambda x: x["similarityScore"], reverse=True)
-return merged[:top_k]
-```
-
-Both models produce unit-normalized 1024-dimensional vectors, so cosine similarity scores sit in the `[0, 1]` range for both. The scores are not calibrated across models — a `0.4` from Titan and a `0.4` from Cohere are not exactly equivalent — but the approximation is sound enough for ranking at POC scale.
+- A clearly HR-focused query will have high scores in `hrPolicyDocuments` and low scores in `callCenterDocuments`
+- A clearly call-center query will have the opposite pattern
+- The caller can see both lists and understand the relevance contrast without needing a `dataSource` tag on individual items
 
 ---
 
@@ -235,14 +249,12 @@ Using AWS_PROFILE=<your-profile> AWS_REGION=us-east-1
 
 [Source 1] Connected to documents RDS. Setting up schema...
   Embedding chunk-001 (Titan v2)...
-  Embedding chunk-002 (Titan v2)...
   ...
   Embedding chunk-008 (Titan v2)...
 [Source 1] Done. Inserted/updated 8 chunks.
 
 [Source 2] Connected to HR policy RDS. Setting up schema...
   Embedding pol-001-c1 (Cohere English v3)...
-  Embedding pol-001-c2 (Cohere English v3)...
   ...
   Embedding pol-003-c3 (Cohere English v3)...
 [Source 2] Done. Inserted/updated 8 chunks.
@@ -260,95 +272,147 @@ make query q="your question here"
 
 ## Running Results
 
-### Domain-specific routing: HR query
+### HR-domain query
 
-A question clearly about HR returns results entirely from the HR policy source:
+A question clearly about HR shows high scores in `hrPolicyDocuments` and very low scores in `callCenterDocuments`:
 
 ```
 $ make query q="What is the leave policy?"
 
 Query: What is the leave policy?
-Matches (5):
+Total results: 10
 
-  [1] score=0.4116  source=hr-policy-leave  dataSource=hr-policies
+HR Policy Documents (5):
+  [1] score=0.4116  source=hr-policy-leave  category=leave
       Parental leave of up to 12 weeks is available for primary caregivers following the birth or adoption of a child.
 
-  [2] score=0.3624  source=hr-policy-leave  dataSource=hr-policies
+  [2] score=0.3624  source=hr-policy-leave  category=leave
       Requests for leave exceeding five consecutive days must be submitted at least two weeks in advance.
 
-  [3] score=0.3227  source=hr-policy-leave  dataSource=hr-policies
+  [3] score=0.3227  source=hr-policy-leave  category=leave
       Employees accrue 1.5 days of paid time off per month, up to a maximum of 18 days per calendar year.
 
-  [4] score=0.2243  source=hr-policy-onboarding  dataSource=hr-policies
+  [4] score=0.2243  source=hr-policy-onboarding  category=onboarding
       All new hires must complete mandatory compliance training within the first 30 days of employment.
 
-  [5] score=0.2070  source=hr-policy-performance  dataSource=hr-policies
+  [5] score=0.2070  source=hr-policy-performance  category=performance
       Employees receiving a below-expectations rating must complete a 60-day performance improvement plan.
+
+
+Call Center Documents (5):
+  [1] score=0.0942  source=sample-doc-1
+      Agents should verify customer identity before discussing loan details.
+
+  [2] score=0.0871  source=sample-doc-3
+      If a customer requests a supervisor, transfer the call within two minutes and document the reason.
+
+  [3] score=0.0859  source=sample-doc-2
+      Payment arrangements must be documented in the system within 24 hours of the customer agreement.
+
+  [4] score=0.0685  source=sample-doc-3
+      Never place a customer on hold for more than three minutes without providing a status update.
+
+  [5] score=0.0580  source=sample-doc-2
+      Agents are required to read the disclosure script at the start of each servicing call.
 ```
 
-All five results come from the HR policy database. The three leave-specific chunks rank 1–3, with related HR content filling out the tail. The call-center source contributes nothing to this query — its cosine similarity scores against a leave-policy question are low enough to fall outside the top 5.
+The HR policy scores (0.41–0.21) are roughly 4× higher than the call-center scores (0.09–0.06). The three leave-specific chunks rank 1–3 with the `category=leave` label making them immediately identifiable. The call-center source is present but clearly irrelevant.
 
 ---
 
-### Domain-specific routing: call-center query
+### Call-center-domain query
 
-A call-center question draws almost entirely from the documents source, with a faint cross-source bleed at rank 5:
+A call-center question inverts the pattern — high scores in `callCenterDocuments`, low scores in `hrPolicyDocuments`:
 
 ```
 $ make query q="How should agents handle customer identity?"
 
 Query: How should agents handle customer identity?
-Matches (5):
+Total results: 10
 
-  [1] score=0.5873  source=sample-doc-1  dataSource=documents
+HR Policy Documents (5):
+  [1] score=0.2160  source=hr-policy-onboarding  category=onboarding
+      New employees are assigned a buddy from their team for the first 90 days to support integration.
+
+  [2] score=0.1660  source=hr-policy-performance  category=performance
+      Employees receiving a below-expectations rating must complete a 60-day performance improvement plan.
+
+  [3] score=0.1369  source=hr-policy-onboarding  category=onboarding
+      All new hires must complete mandatory compliance training within the first 30 days of employment.
+
+  [4] score=0.1200  source=hr-policy-performance  category=performance
+      Mid-year check-ins are mandatory for all employees and should be scheduled between June and July.
+
+  [5] score=0.1012  source=hr-policy-performance  category=performance
+      Annual performance reviews are conducted in December and directly inform compensation adjustments effective January.
+
+
+Call Center Documents (5):
+  [1] score=0.5873  source=sample-doc-1
       Agents should verify customer identity before discussing loan details.
 
-  [2] score=0.4286  source=sample-doc-3  dataSource=documents
+  [2] score=0.4286  source=sample-doc-3
       Agents should use the customer's name at least twice during the call to build rapport.
 
-  [3] score=0.2907  source=sample-doc-2  dataSource=documents
+  [3] score=0.2907  source=sample-doc-2
       Agents are required to read the disclosure script at the start of each servicing call.
 
-  [4] score=0.2507  source=sample-doc-2  dataSource=documents
+  [4] score=0.2507  source=sample-doc-2
       All customer calls must be recorded for quality assurance and regulatory compliance.
 
-  [5] score=0.2160  source=hr-policy-onboarding  dataSource=hr-policies
-      New employees are assigned a buddy from their team for the first 90 days to support integration.
+  [5] score=0.1703  source=sample-doc-3
+      Never place a customer on hold for more than three minutes without providing a status update.
 ```
 
-Ranks 1–4 come from the call-center source. Rank 5 is an HR policy chunk about onboarding — it scored just above the remaining call-center chunks because "customer identity" and "employee integration" share some semantic neighborhood in Cohere's embedding space. The `dataSource` label makes this cross-source result immediately visible.
-
-What this demonstrates: the merge + re-rank approach naturally routes queries to their most relevant source. The caller does not need to know which source to query — relevance drives the ranking automatically.
+The call-center scores (0.59–0.17) are far above the HR scores (0.22–0.10). The top call-center result (0.59) is a direct hit. The HR list is present and populated — useful for confirming there is no surprising cross-source relevance.
 
 ---
 
-### The ranking flip
+### Targeted call-center query
 
-A more targeted call-center query shows the ranking shift as expected:
+A more specific call-center query shows the relevance shift within the call-center source:
 
 ```
 $ make query q="What do I do with a servicing exception?"
 
 Query: What do I do with a servicing exception?
-Matches (5):
+Total results: 10
 
-  [1] score=0.4776  source=sample-doc-1  dataSource=documents
-      Escalate servicing exceptions to the specialist queue.
-
-  [2] score=0.1893  source=sample-doc-3  dataSource=documents
-      If a customer requests a supervisor, transfer the call within two minutes and document the reason.
-
-  [3] score=0.1611  source=hr-policy-performance  dataSource=hr-policies
+HR Policy Documents (5):
+  [1] score=0.1611  source=hr-policy-performance  category=performance
       Employees receiving a below-expectations rating must complete a 60-day performance improvement plan.
 
-  [4] score=0.1389  source=hr-policy-leave  dataSource=hr-policies
+  [2] score=0.1389  source=hr-policy-leave  category=leave
       Employees accrue 1.5 days of paid time off per month, up to a maximum of 18 days per calendar year.
 
-  [5] score=0.1192  source=sample-doc-3  dataSource=documents
+  [3] score=0.1145  source=hr-policy-leave  category=leave
+      Requests for leave exceeding five consecutive days must be submitted at least two weeks in advance.
+
+  [4] score=0.1108  source=hr-policy-leave  category=leave
+      Parental leave of up to 12 weeks is available for primary caregivers following the birth or adoption of a child.
+
+  [5] score=0.0914  source=hr-policy-onboarding  category=onboarding
+      All new hires must complete mandatory compliance training within the first 30 days of employment.
+
+
+Call Center Documents (5):
+  [1] score=0.4776  source=sample-doc-1
+      Escalate servicing exceptions to the specialist queue.
+
+  [2] score=0.1893  source=sample-doc-3
+      If a customer requests a supervisor, transfer the call within two minutes and document the reason.
+
+  [3] score=0.1192  source=sample-doc-3
       Never place a customer on hold for more than three minutes without providing a status update.
+
+  [4] score=0.1175  source=sample-doc-2
+      Agents are required to read the disclosure script at the start of each servicing call.
+
+  [5] score=0.0963  source=sample-doc-2
+      Payment arrangements must be documented in the system within 24 hours of the customer agreement.
 ```
 
-The escalation chunk moves to rank 1 (from rank 2 in the identity query), confirming the semantic routing is working correctly. Note that ranks 3–4 are HR policy chunks — the word "exception" has semantic overlap with performance and leave policy language, causing low-scoring cross-source bleed. The `dataSource` label makes these easily identifiable.
+The escalation chunk moves to rank 1 in `callCenterDocuments` at 0.48 — a clear semantic hit. The HR list scores are all below 0.17, confirming the query has no meaningful HR relevance. The side-by-side presentation makes this contrast immediately readable without any post-processing.
 
 ---
 

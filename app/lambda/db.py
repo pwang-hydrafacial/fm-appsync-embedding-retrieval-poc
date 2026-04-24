@@ -42,7 +42,7 @@ def search_source1(embedding: list[float], top_k: int = 5) -> list[dict]:
                 "text": r[2],
                 "source": r[3],
                 "similarityScore": float(r[4]),
-                "dataSource": "documents",
+                "metadata": None,
             }
             for r in rows
         ]
@@ -56,7 +56,7 @@ def search_source2(embedding: list[float], top_k: int = 5) -> list[dict]:
     try:
         rows = conn.run(
             """
-            SELECT chunk_id, policy_id, text, source,
+            SELECT chunk_id, policy_id, text, source, category,
                    1 - (embedding <=> CAST(:vec AS vector)) AS similarity_score
             FROM policy_chunks
             ORDER BY embedding <=> CAST(:vec AS vector)
@@ -71,8 +71,8 @@ def search_source2(embedding: list[float], top_k: int = 5) -> list[dict]:
                 "documentId": r[1],
                 "text": r[2],
                 "source": r[3],
-                "similarityScore": float(r[4]),
-                "dataSource": "hr-policies",
+                "similarityScore": float(r[5]),
+                "metadata": {"category": r[4]} if r[4] else None,
             }
             for r in rows
         ]
